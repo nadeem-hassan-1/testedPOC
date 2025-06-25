@@ -1,0 +1,191 @@
+- name: Configure Compute resources via gcloud
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    project: "saip-poc-0106"
+    zone: "me-central2-a"
+    network: "saip-vpc"
+    subnetwork: "saip-subnet"
+    machine_type: "e2-medium"
+    disk_size_gb: 10
+    gluster_disk_size_gb: 200
+
+  tasks:
+    - name: Enable Compute Engine API
+      shell: |
+        gcloud services enable compute.googleapis.com \
+          --project {{ project }} --quiet
+      register: enable_compute_api
+      failed_when: enable_compute_api.rc not in [0,1]
+
+    - name: Create startup script for app-server
+      copy:
+        dest: /tmp/startup_app_server.sh
+        content: |
+          #!/bin/bash
+          set -e
+          apt-get update
+          apt-get install -y nginx openssh-server
+          systemctl enable ssh
+          systemctl enable nginx
+          systemctl start nginx
+
+    - name: Create app-server VM
+      shell: |
+        gcloud compute instances create app-server \
+          --project {{ project }} \
+          --zone {{ zone }} \
+          --machine-type {{ machine_type }} \
+          --subnet {{ subnetwork }} \
+          --network {{ network }} \
+          --boot-disk-size {{ disk_size_gb }}GB \
+          --image-family ubuntu-minimal-2404-lts-amd64 \
+          --image-project ubuntu-os-cloud \
+          --metadata-from-file startup-script=/tmp/startup_app_server.sh \
+          --tags app-server \
+          --quiet
+      register: create_app_server
+      failed_when: create_app_server.rc not in [0,1]
+
+    - name: Create startup script for Jira
+      copy:
+        dest: /tmp/startup_jira.sh
+        content: |
+          #!/bin/bash
+          set -e
+          apt-get update
+          apt-get install -y openjdk-11-jre-headless wget
+          useradd -m jira
+          wget https://www.atlassian.com/software/jira/downloads/binary/atlassian-jira-software-8.20.10.tar.gz -O /tmp/jira.tar.gz
+          mkdir -p /opt/jira
+          tar -xzvf /tmp/jira.tar.gz -C /opt/jira --strip-components=1
+          chown -R jira:jira /opt/jira
+          su - jira -c "/opt/jira/bin/start-jira.sh"
+
+    - name: Provision Jira Server Instance
+      shell: |
+        gcloud compute instances create jira-server \
+          --project {{ project }} \
+          --zone {{ zone }} \
+          --machine-type {{ machine_type }} \
+          --subnet {{ subnetwork }} \
+          --network {{ network }} \
+          --boot-disk-size {{ disk_size_gb }}GB \
+          --image-family ubuntu-minimal-2404-lts-amd64 \
+          --image-project ubuntu-os-cloud \
+          --metadata-from-file startup-script=/tmp/startup_jira.sh \
+          --tags jira \
+          --quiet
+      register: create_jira
+      failed_when: create_jira.rc not in [0,1]
+
+    - name: Create startup script for Bitbucket
+      copy:
+        dest: /tmp/startup_bitbucket.sh
+        content: |
+          #!/bin/bash
+          set -e
+          apt-get update
+          apt-get install -y openjdk-11-jre-headless wget
+          useradd -m bitbucket
+          wget https://www.atlassian.com/software/bitbucket/downloads/binary/atlassian-bitbucket-7.21.0.tar.gz -O /tmp/bitbucket.tar.gz
+          mkdir -p /opt/bitbucket
+          tar -xzvf /tmp/bitbucket.tar.gz -C /opt/bitbucket --strip-components=1
+          chown -R bitbucket:bitbucket /opt/bitbucket
+          su - bitbucket -c "/opt/bitbucket/bin/start-bitbucket.sh"
+
+    - name: Provision Bitbucket Server Instance
+      shell: |
+        gcloud compute instances create bitbucket-server \
+          --project {{ project }} \
+          --zone {{ zone }} \
+          --machine-type {{ machine_type }} \
+          --subnet {{ subnetwork }} \
+          --network {{ network }} \
+          --boot-disk-size {{ disk_size_gb }}GB \
+          --image-family ubuntu-minimal-2404-lts-amd64 \
+          --image-project ubuntu-os-cloud \
+          --metadata-from-file startup-script=/tmp/startup_bitbucket.sh \
+          --tags bitbucket \
+          --quiet
+      register: create_bitbucket
+      failed_when: create_bitbucket.rc not in [0,1]
+
+    - name: Create startup script for Confluence
+      copy:
+        dest: /tmp/startup_confluence.sh
+        content: |
+          #!/bin/bash
+          set -e
+          apt-get update
+          apt-get install -y openjdk-11-jre-headless wget
+          useradd -m confluence
+          wget https://www.atlassian.com/software/confluence/downloads/binary/atlassian-confluence-7.13.0.tar.gz -O /tmp/confluence.tar.gz
+          mkdir -p /opt/confluence
+          tar -xzvf /tmp/confluence.tar.gz -C /opt/confluence --strip-components=1
+          chown -R confluence:confluence /opt/confluence
+          su - confluence -c "/opt/confluence/bin/start-confluence.sh"
+
+    - name: Provision Confluence Server Instance
+      shell: |
+        gcloud compute instances create confluence-server \
+          --project {{ project }} \
+          --zone {{ zone }} \
+          --machine-type {{ machine_type }} \
+          --subnet {{ subnetwork }} \
+          --network {{ network }} \
+          --boot-disk-size {{ disk_size_gb }}GB \
+          --image-family ubuntu-minimal-2404-lts-amd64 \
+          --image-project ubuntu-os-cloud \
+          --metadata-from-file startup-script=/tmp/startup_confluence.sh \
+          --tags confluence \
+          --quiet
+      register: create_confluence
+      failed_when: create_confluence.rc not in [0,1]
+
+    - name: Create startup script for GlusterFS
+      copy:
+        dest: /tmp/startup_gluster.sh
+        content: |
+          #!/bin/bash
+          set -e
+          apt-get update
+          apt-get install -y xfsprogs glusterfs-server
+          mkfs.xfs -f /dev/disk/by-id/google-gluster-disk
+          mkdir -p /mnt/gluster/brick1
+          mount /dev/disk/by-id/google-gluster-disk /mnt/gluster/brick1
+          gluster peer probe $(hostname -i) || true
+          sleep 5
+          gluster volume create gv0 replica 1 transport tcp $(hostname -i):/mnt/gluster/brick1 force
+          gluster volume start gv0
+
+    - name: Create persistent disk for GlusterFS
+      shell: |
+        gcloud compute disks create gluster-disk \
+          --project {{ project }} \
+          --zone {{ zone }} \
+          --size {{ gluster_disk_size_gb }}GB \
+          --type pd-standard \
+          --quiet
+      register: create_gluster_disk
+      failed_when: create_gluster_disk.rc not in [0,1]
+
+    - name: Provision GlusterFS VM
+      shell: |
+        gcloud compute instances create gluster-server \
+          --project {{ project }} \
+          --zone {{ zone }} \
+          --machine-type {{ machine_type }} \
+          --subnet {{ subnetwork }} \
+          --network {{ network }} \
+          --boot-disk-size {{ disk_size_gb }}GB \
+          --image-family ubuntu-minimal-2404-lts-amd64 \
+          --image-project ubuntu-os-cloud \
+          --disk name=gluster-disk,device-name=gluster-volume,mode=rw,boot=no \
+          --metadata-from-file startup-script=/tmp/startup_gluster.sh \
+          --tags gluster \
+          --quiet
+      register: create_gluster_server
+      failed_when: create_gluster_server.rc not in [0,1]
+

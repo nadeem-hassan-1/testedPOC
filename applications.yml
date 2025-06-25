@@ -1,0 +1,66 @@
+- name: Deploy Applications to GKE
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    kubeconfig_path: "/tmp/saip-gke-cluster.kubeconfig"
+    app_deploy_count: 3
+
+  tasks:
+    - name: Retrieve GKE cluster credentials
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      shell: |
+        gcloud container clusters get-credentials saip-gke-cluster \
+          --region me-central2 \
+          --project saip-poc-0106
+
+    - name: Debug KUBECONFIG file location
+      debug:
+        msg: "Cluster credentials should be in {{ kubeconfig_path }}"
+
+    - name: Deploy sample NGINX on GKE
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: sample-nginx
+            namespace: default
+          spec:
+            replicas: "{{ app_deploy_count }}"
+            selector:
+              matchLabels:
+                app: sample-nginx
+            template:
+              metadata:
+                labels:
+                  app: sample-nginx
+              spec:
+                containers:
+                  - name: nginx
+                    image: nginx:stable
+                    ports:
+                      - containerPort: 80
+
+    - name: Expose sample NGINX Deployment via LoadBalancer
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: sample-nginx-svc
+            namespace: default
+          spec:
+            type: LoadBalancer
+            selector:
+              app: sample-nginx
+            ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 80
+

@@ -1,0 +1,59 @@
+- name: Configure Cloud SQL via gcloud
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    project: "saip-poc-0106"
+    instance_name: "saip-poc-0106-db-instance"
+    region: "me-central2"
+    network_full: "projects/saip-poc-0106/global/networks/saip-vpc"
+    db_name: "saip_db"
+    db_user: "saip_user"
+    db_password: "SAIPpoc2025@"
+
+  tasks:
+    - name: Enable Cloud SQL Admin API
+      shell: |
+        gcloud services enable sqladmin.googleapis.com \
+          --project {{ project }} --quiet
+      register: enable_api
+      failed_when: enable_api.rc not in [0,1]
+
+    - name: Create Cloud SQL PostgreSQL instance
+      shell: |
+        gcloud sql instances create {{ instance_name }} \
+          --database-version=POSTGRES_14 \
+          --tier=db-f1-micro \
+          --region={{ region }} \
+          --network={{ network_full }} \
+          --quiet
+      register: create_instance
+      failed_when: create_instance.rc not in [0,1]
+
+    - name: Create PostgreSQL database
+      shell: |
+        gcloud sql databases create {{ db_name }} \
+          --instance={{ instance_name }} \
+          --project={{ project }} \
+          --quiet
+      register: create_db
+      failed_when: create_db.rc not in [0,1]
+
+    - name: Create PostgreSQL user with static password
+      shell: |
+        gcloud sql users create {{ db_user }} \
+          --host="%" \
+          --instance={{ instance_name }} \
+          --password='{{ db_password }}' \
+          --project={{ project }} \
+          --quiet
+      register: create_user
+      failed_when: create_user.rc not in [0,1]
+
+    - name: Show database connection details
+      debug:
+        msg:
+          - "Instance: {{ instance_name }}"
+          - "Database: {{ db_name }}"
+          - "User: {{ db_user }}"
+          - "Password: {{ db_password }}"

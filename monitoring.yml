@@ -1,0 +1,96 @@
+- name: Enable GKE API and Deploy Cluster
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    poc_project: saip-poc-0106
+    poc_region: me-central2
+    cluster_name: saip-gke-cluster
+    network: saip-vpc
+    subnetwork: saip-subnet
+    service_account: "saip-646@saip-poc-0106.iam.gserviceaccount.com"
+    kubeconfig_path: "/tmp/{{ cluster_name }}.kubeconfig"
+
+  tasks:
+    - name: Check if Helm is installed
+      stat:
+        path: /usr/local/bin/helm
+      register: helm_stat
+
+    - name: Download Helm archive
+      get_url:
+        url: https://get.helm.sh/helm-v3.12.0-linux-amd64.tar.gz
+        dest: /tmp/helm.tar.gz
+      when: not helm_stat.stat.exists
+
+    - name: Extract Helm archive
+      unarchive:
+        src: /tmp/helm.tar.gz
+        dest: /tmp
+        remote_src: yes
+      when: not helm_stat.stat.exists
+
+    - name: Install Helm binary
+      copy:
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        mode: '0755'
+      become: true
+      when: not helm_stat.stat.exists
+
+    - name: Add Prometheus Helm repo
+      kubernetes.core.helm_repository:
+        name: prometheus-community
+        repo_url: https://prometheus-community.github.io/helm-charts
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy Prometheus via Helm
+      kubernetes.core.helm:
+        name: prometheus
+        chart_ref: prometheus-community/prometheus
+        namespace: monitoring
+        create_namespace: true
+        values:
+          server:
+            persistentVolume:
+              enabled: true
+              size: 10Gi
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Add Grafana Helm repo
+      kubernetes.core.helm_repository:
+        name: grafana
+        repo_url: https://grafana.github.io/helm-charts
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy Grafana via Helm
+      kubernetes.core.helm:
+        name: grafana
+        chart_ref: grafana/grafana
+        namespace: monitoring
+        create_namespace: false
+        values:
+          persistence:
+            enabled: true
+            size: 10Gi
+          adminUser: admin
+          adminPassword: "SAIPpoc2025@"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Wait for Grafana service to be available
+      kubernetes.core.k8s_info:
+        kind: Service
+        namespace: monitoring
+        name: grafana
+      register: grafana_svc
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Print Grafana URL
+      debug:
+        msg: "Grafana is exposed at http://{{ grafana_svc.resources[0].spec.clusterIP }}:3000 (user: admin, pass: SAIPpoc2025@)"
+

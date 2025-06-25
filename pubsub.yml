@@ -1,0 +1,25 @@
+- name: Enable Pub/Sub API and Create Topic/Subscription
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Enable Pub/Sub API
+      shell: |
+        gcloud services enable pubsub.googleapis.com --project saip-poc-0106 --quiet
+      register: enable_api
+      failed_when: enable_api.rc not in [0,1]
+
+    - name: Create Pub/Sub topic
+      shell: |
+        gcloud pubsub topics create saip-poc-0106-topic --project saip-poc-0106 --quiet
+      register: create_topic
+      failed_when: create_topic.rc not in [0,1]
+
+    - name: Create Pub/Sub subscription
+      shell: |
+        gcloud pubsub subscriptions create saip-poc-0106-subscription \
+          --topic saip-poc-0106-topic --ack-deadline=30 --project saip-poc-0106 --quiet
+      register: create_sub
+      failed_when: create_sub.rc not in [0,1]
+

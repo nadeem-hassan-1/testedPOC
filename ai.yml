@@ -1,0 +1,83 @@
+- name: Provision and verify AI/GPU VM on GCP
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars:
+    poc_project: "saip-poc-0106"
+    poc_region: "me-central2"
+    service_account_file: "/home/nadeem_hassan/saip-poc-0106-service-account.json"
+    ai_gpu_machine_type: "g2-standard-8"
+    ai_gpu_type: "nvidia-l4"  # Correct GPU accelerator type
+    ai_gpu_count: 1
+    network_name: "saip-vpc"
+    subnet_name: "saip-subnet"
+
+  tasks:
+    - name: Enable Compute Engine API (required for GPUs)
+      ansible.builtin.shell: |
+        gcloud services enable compute.googleapis.com \
+          --project {{ poc_project }} --quiet
+      environment:
+        CLOUDSDK_AUTH_CREDENTIALS: "{{ service_account_file }}"
+      register: enable_api
+      failed_when: enable_api.rc not in [0,1]
+
+    - name: Provision AI/GPU VM instance
+      ansible.builtin.shell: |
+        gcloud compute instances create ai-gpu-vm \
+          --project {{ poc_project }} \
+          --zone {{ poc_region }}-a \
+          --machine-type {{ ai_gpu_machine_type }} \
+          --accelerator type={{ ai_gpu_type }},count={{ ai_gpu_count }} \
+          --image-family ubuntu-minimal-2404-lts-amd64 \
+          --image-project ubuntu-os-cloud \
+          --boot-disk-size 200GB \
+          --maintenance-policy TERMINATE \
+          --restart-on-failure \
+          --network {{ network_name }} \
+          --subnet {{ subnet_name }} \
+          --quiet
+      environment:
+        CLOUDSDK_AUTH_CREDENTIALS: "{{ service_account_file }}"
+      register: create_vm
+      ignore_errors: yes
+
+    - name: Debug create_vm output (errors only)
+      ansible.builtin.debug:
+        msg:
+          - "stdout: {{ create_vm.stdout }}"
+          - "stderr: {{ create_vm.stderr }}"
+      when: create_vm.stderr != ''
+
+    - name: Fail if VM creation was unsuccessful
+      ansible.builtin.fail:
+        msg: "AI/GPU VM provisioning failed!"
+      when: create_vm.rc != 0
+
+    - name: Describe AI/GPU VM instance
+      ansible.builtin.shell: |
+        gcloud compute instances describe ai-gpu-vm \
+          --project {{ poc_project }} \
+          --zone {{ poc_region }}-a \
+          --format json
+      environment:
+        CLOUDSDK_AUTH_CREDENTIALS: "{{ service_account_file }}"
+      register: ai_gpu_info
+      failed_when: ai_gpu_info.rc != 0
+
+    - name: Parse AI/GPU VM JSON
+      ansible.builtin.set_fact:
+        ai_gpu_details: "{{ ai_gpu_info.stdout | from_json }}"
+
+    - name: Assert VM exists
+      ansible.builtin.assert:
+        that:
+          - ai_gpu_details.name == 'ai-gpu-vm'
+        fail_msg: "AI/GPU VM 'ai-gpu-vm' was not found"
+        success_msg: "AI/GPU VM 'ai-gpu-vm' exists"
+
+    - name: Show AI/GPU VM details
+      ansible.builtin.debug:
+        var: ai_gpu_details
+

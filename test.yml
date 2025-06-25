@@ -1,0 +1,30 @@
+- name: Minimal HAProxy VM Test
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Provision HAProxy test VM
+      google.cloud.gcp_compute_instance:
+        auth_kind: serviceaccount
+        service_account_file: "saip-poc-0106-e05f2284f87b.json"
+        project: "saip-poc-0106"
+        zone: "me-central2-a"
+        name: "haproxy-test-vm"
+        machine_type: "e2-medium"
+        disks:
+          - auto_delete: true
+            boot: true
+            initialize_params:
+              source_image: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64"
+        network_interfaces:
+          - subnetwork: "saip-subnet"
+            access_configs:
+              - name: "External NAT"
+                type: "ONE_TO_ONE_NAT"
+        metadata_from_file:
+          startup-script: "startup.sh"
+        tags:
+          - loadbalancer
+        state: present
+

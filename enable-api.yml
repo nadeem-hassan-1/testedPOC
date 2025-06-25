@@ -1,0 +1,15 @@
+- name: Enable Compute Engine API
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    poc_project: "saip-poc-0106"
+  tasks:
+    - name: Enable Compute Engine API
+      gcp_serviceusage:
+        project: "{{ poc_project }}"
+        service: compute.googleapis.com
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        state: present
+

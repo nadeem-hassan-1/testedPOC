@@ -1,0 +1,148 @@
+- name: Provision SAIP Networking Stack
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  collections:
+    - google.cloud
+  vars:
+    poc_project: "saip-poc-0106"
+    poc_region: "me-central2"
+    network_name: "saip-vpc"
+    subnet_name: "saip-subnet"
+    subnet_cidr: "10.10.0.0/16"
+    network_selflink: "https://www.googleapis.com/compute/v1/projects/saip-poc-0106/global/networks/saip-vpc"
+
+  tasks:
+    - name: Enable Compute Engine API
+      google.cloud.gcp_serviceusage_service:
+        name: compute.googleapis.com
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "/home/nadeem_hassan/saip-poc-0106-e05f2284f87b.json"
+        state: present
+
+
+    - name: Create VPC network
+      google.cloud.gcp_compute_network:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: "{{ network_name }}"
+        auto_create_subnetworks: false
+        routing_config:
+          routing_mode: REGIONAL
+        state: present
+
+    - name: Create subnetwork
+      google.cloud.gcp_compute_subnetwork:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: "{{ subnet_name }}"
+        network:
+          selfLink: "https://www.googleapis.com/compute/v1/projects/{{ poc_project }}/global/networks/{{ network_name }}"
+        region: "{{ poc_region }}"
+        ip_cidr_range: "{{ subnet_cidr }}"
+        private_ip_google_access: true
+        state: present
+    
+    - name: Create firewall rule - allow SSH
+      google.cloud.gcp_compute_firewall:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: allow-ssh
+        network:
+          selfLink: "{{ network_selflink }}"
+        direction: INGRESS
+        allowed:
+          - ip_protocol: tcp
+            ports: ["22"]
+        source_ranges: ["0.0.0.0/0"]
+        target_tags: ["bastion", "admin"]
+        state: present
+
+    - name: Create firewall rule - allow HTTP (80) and HTTPS (443)
+      google.cloud.gcp_compute_firewall:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: allow-web
+        network:
+          selfLink: "{{ network_selflink }}"
+        direction: INGRESS
+        allowed:
+          - ip_protocol: tcp
+            ports: ["80", "443"]
+        source_ranges: ["0.0.0.0/0"]
+        target_tags: ["http-server", "https-server"]
+        state: present
+
+    - name: Create firewall rule - allow Windows RDP (3389)
+      google.cloud.gcp_compute_firewall:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: allow-rdp
+        network:
+          selfLink: "{{ network_selflink }}"
+        direction: INGRESS
+        allowed:
+          - ip_protocol: tcp
+            ports: ["3389"]
+        source_ranges: ["0.0.0.0/0"]
+        target_tags: ["rdp"]
+        state: present
+
+    - name: Create firewall rule - allow internal traffic
+      google.cloud.gcp_compute_firewall:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: allow-internal
+        network:
+          selfLink: "{{ network_selflink }}"
+        direction: INGRESS
+        allowed:
+          - ip_protocol: all
+        source_ranges: ["{{ subnet_cidr }}"]
+        state: present
+
+    - name: Create Cloud Router
+      google.cloud.gcp_compute_router:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: saip-router
+        network:
+          selfLink: "{{ network_selflink }}"
+        region: "{{ poc_region }}"
+        state: present
+
+    - name: Provision HAProxy VM
+      google.cloud.gcp_compute_instance:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        name: haproxy-lb
+        zone: "{{ poc_region }}-a"
+        machine_type: e2-medium
+        disks:
+          - boot: true
+            auto_delete: true
+            initialize_params:
+              source_image: projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts
+        network_interfaces:
+          - network: "{{ network_name }}"
+            subnetwork: "{{ subnet_name }}"
+            access_configs:
+              - name: External NAT
+                type: ONE_TO_ONE_NAT
+        metadata_from_file: 
+          startup-script: startup.sh
+        tags:
+          - loadbalancer
+        state: present
+
+
+

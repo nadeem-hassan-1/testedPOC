@@ -1,0 +1,215 @@
+---
+- name: Enable GKE API and Deploy Cluster
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    poc_project: saip-poc-0106
+    poc_region: me-central2
+    cluster_name: saip-gke-cluster
+    network: saip-vpc
+    subnetwork: saip-subnet
+    service_account: "saip-646@saip-poc-0106.iam.gserviceaccount.com"
+    kubeconfig_path: "/tmp/{{ cluster_name }}.kubeconfig"
+    camunda_admin_password: admin123
+    jenkins_admin_password: admin123
+  tasks:
+    - name: Enable GKE API
+      google.cloud.gcp_serviceusage_service:
+        project: "{{ poc_project }}"
+        name: container.googleapis.com
+        auth_kind: serviceaccount
+        service_account_file: "~/saip-poc-0106-e05f2284f87b.json"
+        state: present
+
+    - name: Create GKE cluster (with custom VPC and default node pool)
+      google.cloud.gcp_container_cluster:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "~/saip-poc-0106-e05f2284f87b.json"
+        name: "{{ cluster_name }}"
+        location: "{{ poc_region }}"
+        initial_node_count: 1
+        network: "projects/{{ poc_project }}/global/networks/{{ network }}"
+        subnetwork: "projects/{{ poc_project }}/regions/{{ poc_region }}/subnetworks/{{ subnetwork }}"
+        release_channel:
+          channel: RAPID
+        state: present
+
+    - name: Create Linux Node Pool
+      google.cloud.gcp_container_node_pool:
+        project: "{{ poc_project }}"
+        location: "{{ poc_region }}"
+        cluster:
+          name: "{{ cluster_name }}"
+        name: "linux-pool"
+        initial_node_count: 4
+        config:
+          machine_type: e2-medium
+          oauth_scopes:
+            - https://www.googleapis.com/auth/cloud-platform
+        auth_kind: serviceaccount
+        service_account_file: "~/saip-poc-0106-e05f2284f87b.json"
+        state: present
+
+    - name: Create Windows Node Pool
+      google.cloud.gcp_container_node_pool:
+        project: "{{ poc_project }}"
+        location: "{{ poc_region }}"
+        cluster: 
+          name: "{{ cluster_name }}"
+        name: "windows-pool"
+        initial_node_count: 2
+        config:
+          machine_type: e2-medium
+          oauth_scopes:
+            - https://www.googleapis.com/auth/cloud-platform
+          image_type: WINDOWS_LTSC_CONTAINERD
+        auth_kind: serviceaccount
+        service_account_file: "~/saip-poc-0106-e05f2284f87b.json"
+        state: present
+
+    - name: Get GKE credentials (with auth file)
+      ansible.builtin.shell: |
+        gcloud auth activate-service-account --key-file=/home/nadeem_hassan/saip-poc-0106-e05f2284f87b.json
+        gcloud container clusters get-credentials {{ cluster_name }} \
+          --region {{ poc_region }} \
+          --project {{ poc_project }}
+      environment:
+        KUBECONFIG: "/tmp/{{ cluster_name }}.kubeconfig"
+    
+    - name: Set KUBECONFIG env var
+      ansible.builtin.set_fact:
+        kubeconfig_path: "/tmp/{{ cluster_name }}.kubeconfig"
+
+    - name: Add OpenSearch Helm repository
+      kubernetes.core.helm_repository:
+        name: opensearch
+        repo_url: https://opensearch-project.github.io/helm-charts
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Create OpenSearch namespace (idempotent)
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: opensearch
+        state: present
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Create Role for Helm to access secrets in OpenSearch
+      kubernetes.core.k8s:
+        api_version: rbac.authorization.k8s.io/v1
+        kind: Role
+        namespace: opensearch
+        name: opensearch-helm-role
+        definition:
+          rules:
+            - apiGroups: [""]
+              resources: ["secrets"]
+              verbs: ["get", "list", "watch"]
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Bind service account to the Role
+      kubernetes.core.k8s:
+        api_version: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        namespace: opensearch
+        name: opensearch-helm-binding
+        definition:
+          subjects:
+            - kind: User
+              name: "{{ service_account }}"
+              apiGroup: rbac.authorization.k8s.io
+          roleRef:
+            kind: Role
+            name: opensearch-helm-role
+            apiGroup: rbac.authorization.k8s.io
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy OpenSearch cluster
+      kubernetes.core.helm:
+        name: opensearch
+        chart_ref: opensearch/opensearch
+        namespace: opensearch
+        create_namespace: true
+        values:
+          clusterConfig:
+            nodeGroup: "master"
+            replicas: 1
+            persistence:
+              enabled: true
+            resources:
+              requests:
+                cpu: "500m"
+                memory: "1Gi"
+              limits:
+                cpu: "1"
+                memory: "2Gi"
+          nodeSelector:
+            kubernetes.io/os: linux
+          tolerations:
+            - key: "node.kubernetes.io/os"
+              operator: "Equal"
+              value: "linux"
+              effect: "NoSchedule"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Add Camunda Helm repository
+      kubernetes.core.helm_repository:
+        name: camunda
+        repo_url: https://camunda.github.io/camunda-platform-helm
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy Camunda workflow platform
+      kubernetes.core.helm:
+        name: camunda
+        chart_ref: camunda/camunda-platform
+        namespace: camunda
+        create_namespace: true
+        values:
+          global:
+            identity:
+              adminUser: admin
+              adminPassword: "SaipPOC2025@"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Add Bitnami Helm repository
+      kubernetes.core.helm_repository:
+        name: bitnami
+        repo_url: https://charts.bitnami.com/bitnami
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy Redis cache
+      kubernetes.core.helm:
+        name: redis
+        chart_ref: bitnami/redis
+        namespace: cache
+        create_namespace: true
+        values:
+          architecture: standalone
+          auth:
+            enabled: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy Jenkins CI/CD
+      kubernetes.core.helm:
+        name: jenkins
+        chart_ref: bitnami/jenkins
+        namespace: cicd
+        create_namespace: true
+        values:
+          master:
+            adminUser: "admin"
+            adminPassword: "SAIPpoc2025@"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+

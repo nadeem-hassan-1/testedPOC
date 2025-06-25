@@ -1,0 +1,13 @@
+echo ".retry
+*.pyc
+*.log
+__pycache__/
+*.tfstate*
+.env
+*.kubeconfig
+*.bak
+*.swp
+*.json
+service-account.json
+" > .gitignore
+

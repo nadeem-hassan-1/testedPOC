@@ -1,0 +1,30 @@
+---
+- name: Enable Cloud Storage API and Create GCS Bucket
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    poc_project: "saip-poc-0106"
+    poc_region: "me-central2"
+    storage_bucket_name: "saip-poc-test-bucket"
+    service_account_file: "~/saip-poc-0106-e05f2284f87b.json"
+
+  tasks:
+    - name: Enable Cloud Storage API
+      google.cloud.gcp_serviceusage_service:
+        project: "{{ poc_project }}"
+        name: "storage.googleapis.com"
+        auth_kind: serviceaccount
+        service_account_file: "{{ service_account_file }}"
+        state: present
+
+    - name: Create GCS bucket
+      google.cloud.gcp_storage_bucket:
+        project: "{{ poc_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ service_account_file }}"
+        name: "{{ storage_bucket_name }}"
+        location: "{{ poc_region }}"
+        storage_class: STANDARD
+        state: present
+
