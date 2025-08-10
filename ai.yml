@@ -8,7 +8,7 @@
     poc_region: "me-central2"
     service_account_file: "/home/nadeem_hassan/saip-poc-0106-service-account.json"
     ai_gpu_machine_type: "g2-standard-8"
-    ai_gpu_type: "nvidia-l4"  # Correct GPU accelerator type
+    ai_gpu_type: "nvidia-l4"
     ai_gpu_count: 1
     network_name: "saip-vpc"
     subnet_name: "saip-subnet"
