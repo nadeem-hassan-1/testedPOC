@@ -1,0 +1,22 @@
+- name: Stop PostgreSQL
+  service:
+    name: postgresql
+    state: stopped
+
+- name: Clear data directory
+  file:
+    path: /var/lib/postgresql/16/main
+    state: absent
+
+- name: Perform base backup from master
+  become_user: postgres
+  shell: |
+    pg_basebackup -h 10.10.0.65 -D /var/lib/postgresql/16/main -U replicator -Fp -Xs -P -R
+  environment:
+    PGPASSWORD: "replicatorpass"
+
+- name: Ensure PostgreSQL is started
+  service:
+    name: postgresql
+    state: started
+

@@ -1,0 +1,9 @@
+project_id: saip-poc-0106
+zone: me-central2-a
+region: me-central2
+machine_type: e2-medium
+image_family: debian-11
+image_project: debian-cloud
+postgres_version: 14
+replica_user: replicator
+replica_password: replica_pass

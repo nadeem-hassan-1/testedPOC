@@ -1,0 +1,121 @@
+---
+- name: Provision PostgreSQL Master and Replica with Replication
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Create Master VM
+      ansible.builtin.command:
+        cmd: >
+          gcloud compute instances create pg-master 
+          --project=saip-poc-0106 
+          --zone=me-central2-a 
+          --machine-type=e2-medium 
+          --image=projects/ubuntu-os-cloud/global/images/ubuntu-minimal-2404-noble-amd64-v20250624 
+          --network=saip-vpc 
+          --subnet=saip-subnet 
+          --tags=postgres 
+          --boot-disk-auto-delete 
+          --quiet
+      register: master_create
+      failed_when: master_create.rc != 0 and 'already exists' not in master_create.stderr
+
+    - name: Create Replica VM
+      ansible.builtin.command:
+        cmd: >
+          gcloud compute instances create pg-replica 
+          --project=saip-poc-0106 
+          --zone=me-central2-a 
+          --machine-type=e2-medium 
+          --image=projects/ubuntu-os-cloud/global/images/ubuntu-minimal-2404-noble-amd64-v20250624 
+          --network=saip-vpc 
+          --subnet=saip-subnet 
+          --tags=postgres 
+          --boot-disk-auto-delete 
+          --quiet
+      register: replica_create
+      failed_when: replica_create.rc != 0 and 'already exists' not in replica_create.stderr
+
+- name: Wait for SSH to be ready
+  hosts: all
+  gather_facts: no
+
+  tasks:
+    - name: Wait for SSH
+      wait_for:
+        port: 22
+        host: "{{ ansible_host }}"
+        timeout: 300
+        state: started
+
+- name: Configure PostgreSQL Master
+  hosts: pg-master
+  become: yes
+
+  tasks:
+    - name: Update apt
+      apt:
+        update_cache: yes
+
+    - name: Install PostgreSQL
+      apt:
+        name: postgresql
+        state: present
+
+    - name: Configure postgresql.conf
+      lineinfile:
+        path: /etc/postgresql/14/main/postgresql.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: '^#?listen_addresses', line: "listen_addresses = '*'" }
+        - { regexp: '^#?wal_level', line: 'wal_level = replica' }
+        - { regexp: '^#?max_wal_senders', line: 'max_wal_senders = 3' }
+        - { regexp: '^#?wal_keep_size', line: 'wal_keep_size = 64' }
+
+    - name: Configure pg_hba.conf to allow replication
+      blockinfile:
+        path: /etc/postgresql/14/main/pg_hba.conf
+        block: |
+          host replication replica 0.0.0.0/0 md5
+
+    - name: Restart PostgreSQL
+      service:
+        name: postgresql
+        state: restarted
+
+- name: Configure PostgreSQL Replica
+  hosts: pg-replica
+  become: yes
+
+  vars:
+    replication_password: replica_pass
+
+  tasks:
+    - name: Update apt
+      apt:
+        update_cache: yes
+
+    - name: Install PostgreSQL
+      apt:
+        name: postgresql
+        state: present
+
+    - name: Stop PostgreSQL service
+      service:
+        name: postgresql
+        state: stopped
+
+    - name: Clear existing data directory
+      file:
+        path: /var/lib/postgresql/14/main
+        state: absent
+
+    - name: Perform base backup from master
+      shell: |
+        sudo -u postgres PGPASSWORD={{ replication_password }} \
+        pg_basebackup -h {{ hostvars['pg-master']['ansible_host'] }} \
+        -D /var/lib/postgresql/14/main -U replica -Fp -Xs -P -R
+

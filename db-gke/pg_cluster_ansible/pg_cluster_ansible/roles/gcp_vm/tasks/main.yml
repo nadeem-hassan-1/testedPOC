@@ -1,0 +1,31 @@
+---
+- name: Create master VM via gcloud
+  ansible.builtin.command: >
+    gcloud compute instances create pg-master
+    --project=saip-poc-0106
+    --zone=me-central2-a
+    --machine-type=e2-medium
+    --image=projects/ubuntu-os-cloud/global/images/ubuntu-minimal-2404-noble-amd64-v20250624
+    --network=saip-vpc
+    --subnet=saip-subnet
+    --tags=postgres
+    --boot-disk-auto-delete
+    --quiet
+  register: master_result
+  changed_when: false
+
+- name: Create replica VM via gcloud
+  ansible.builtin.command: >
+    gcloud compute instances create pg-replica
+    --project=saip-poc-0106
+    --zone=me-central2-a
+    --machine-type=e2-medium
+    --image=projects/ubuntu-os-cloud/global/images/ubuntu-minimal-2404-noble-amd64-v20250624
+    --network=saip-vpc
+    --subnet=saip-subnet
+    --tags=postgres
+    --boot-disk-auto-delete
+    --quiet
+  register: replica_result
+  changed_when: false
+

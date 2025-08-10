@@ -1,0 +1,97 @@
+---
+# Single-file Ansible playbook for PostgreSQL VM → GKE migration (1-node PoC) using saip-vpc and saip-subnet
+
+- name: Migrate PostgreSQL from VM to GKE (1-node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    cluster_name: pg-ha-cluster
+    region: me-central2
+    db_user: postgres
+    db_pass: postgres
+    replication_pass: replica_pass
+    backup_file: full_backup.sql
+  tasks:
+
+    - name: Create GKE cluster (1-node PoC)
+      ansible.builtin.shell: |
+        gcloud container clusters create {{ cluster_name }} \
+          --region={{ region }} \
+          --num-nodes=1 \
+          --network=saip-vpc \
+          --subnetwork=saip-subnet \
+          --enable-ip-alias \
+          --enable-autorepair \
+          --enable-autoupgrade \
+          --release-channel=regular \
+          --quiet
+      args:
+        creates: /tmp/.gke_created
+
+    - name: Get GKE credentials
+      ansible.builtin.shell: >
+        gcloud container clusters get-credentials {{ cluster_name }} --region {{ region }}
+
+    - name: Install Helm
+      ansible.builtin.shell: |
+        curl -sSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Add Bitnami repo and update
+      ansible.builtin.shell: |
+        helm repo add bitnami https://charts.bitnami.com/bitnami
+        helm repo update
+
+    - name: Deploy PostgreSQL HA to GKE
+      ansible.builtin.shell: |
+        helm upgrade --install pg-ha bitnami/postgresql \
+          --set architecture=replication \
+          --set global.storageClass=standard \
+          --set postgresql.replicaCount=1 \
+          --set postgresql.password={{ db_pass }} \
+          --set postgresql.replication.password={{ replication_pass }}
+
+    - name: Dump Postgres DB from master VM
+      ansible.builtin.shell: >
+        gcloud compute ssh pg-master --zone={{ region }}-a --command="pg_dumpall -U {{ db_user }} > /tmp/full_backup.sql"
+      ignore_errors: true
+
+    - name: Copy backup file from VM to control machine
+      ansible.builtin.shell: >
+        gcloud compute scp pg-master:/tmp/full_backup.sql {{ backup_file }} --zone={{ region }}-a
+      ignore_errors: true
+
+    - name: Port-forward Postgres master in GKE
+      ansible.builtin.shell: >
+        kubectl port-forward svc/pg-ha-postgresql 5432:5432 &
+      async: 30
+      poll: 0
+
+    - name: Wait for port-forward to be ready
+      wait_for:
+        host: 127.0.0.1
+        port: 5432
+        timeout: 30
+
+    - name: Restore Postgres dump to GKE
+      ansible.builtin.shell: >
+        PGPASSWORD={{ db_pass }} psql -h localhost -U {{ db_user }} -f {{ backup_file }}
+
+    - name: Check replication status (optional)
+      ansible.builtin.shell: >
+        kubectl exec -it $(kubectl get pods -l role=replica -o jsonpath='{.items[0].metadata.name}') -- \
+        psql -U {{ db_user }} -c "SELECT * FROM pg_stat_wal_receiver;"
+      register: replication_status
+      ignore_errors: true
+
+    - name: Print replication status
+      ansible.builtin.debug:
+        msg: "{{ replication_status.stdout }}"
+
+    - name: Optional cleanup - stop old VMs
+      ansible.builtin.shell: >
+        gcloud compute instances stop pg-master pg-replica --zone={{ region }}-a --quiet
+      ignore_errors: true
+

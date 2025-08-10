@@ -1,0 +1,36 @@
+- name: Install PostgreSQL
+  apt:
+    name: [postgresql, postgresql-contrib]
+    state: present
+    update_cache: yes
+
+- name: Enable remote connections
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: '^#?listen_addresses ='
+    line: "listen_addresses = '*'"
+
+- name: Allow replication user from replica
+  lineinfile:
+    path: /etc/postgresql/16/main/pg_hba.conf
+    insertafter: EOF
+    line: "host    replication     replicator     10.10.0.0/16          md5"
+
+- name: Set WAL parameters
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: '^#?wal_level ='
+    line: "wal_level = replica"
+
+- name: Create replication user
+  become_user: postgres
+  postgresql_user:
+    name: replicator
+    password: "replicatorpass"
+    role_attr_flags: REPLICATION
+
+- name: Restart PostgreSQL
+  service:
+    name: postgresql
+    state: restarted
+

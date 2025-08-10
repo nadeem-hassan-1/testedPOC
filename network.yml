@@ -4,6 +4,7 @@
   gather_facts: no
   collections:
     - google.cloud
+
   vars:
     poc_project: "saip-poc-0106"
     poc_region: "me-central2"
@@ -11,6 +12,7 @@
     subnet_name: "saip-subnet"
     subnet_cidr: "10.10.0.0/16"
     network_selflink: "https://www.googleapis.com/compute/v1/projects/saip-poc-0106/global/networks/saip-vpc"
+    service_account_path: "/home/nadeem_hassan/saip-poc-0106-e05f2284f87b.json"
 
   tasks:
     - name: Enable Compute Engine API
@@ -18,15 +20,14 @@
         name: compute.googleapis.com
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "/home/nadeem_hassan/saip-poc-0106-e05f2284f87b.json"
+        service_account_file: "{{ service_account_path }}"
         state: present
-
 
     - name: Create VPC network
       google.cloud.gcp_compute_network:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: "{{ network_name }}"
         auto_create_subnetworks: false
         routing_config:
@@ -37,20 +38,20 @@
       google.cloud.gcp_compute_subnetwork:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: "{{ subnet_name }}"
         network:
-          selfLink: "https://www.googleapis.com/compute/v1/projects/{{ poc_project }}/global/networks/{{ network_name }}"
+          selfLink: "{{ network_selflink }}"
         region: "{{ poc_region }}"
         ip_cidr_range: "{{ subnet_cidr }}"
         private_ip_google_access: true
         state: present
-    
+
     - name: Create firewall rule - allow SSH
       google.cloud.gcp_compute_firewall:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: allow-ssh
         network:
           selfLink: "{{ network_selflink }}"
@@ -66,7 +67,7 @@
       google.cloud.gcp_compute_firewall:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: allow-web
         network:
           selfLink: "{{ network_selflink }}"
@@ -82,7 +83,7 @@
       google.cloud.gcp_compute_firewall:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: allow-rdp
         network:
           selfLink: "{{ network_selflink }}"
@@ -98,7 +99,7 @@
       google.cloud.gcp_compute_firewall:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: allow-internal
         network:
           selfLink: "{{ network_selflink }}"
@@ -112,7 +113,7 @@
       google.cloud.gcp_compute_router:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: saip-router
         network:
           selfLink: "{{ network_selflink }}"
@@ -123,7 +124,7 @@
       google.cloud.gcp_compute_instance:
         project: "{{ poc_project }}"
         auth_kind: serviceaccount
-        service_account_file: "{{ lookup('env','GOOGLE_APPLICATION_CREDENTIALS') }}"
+        service_account_file: "{{ service_account_path }}"
         name: haproxy-lb
         zone: "{{ poc_region }}-a"
         machine_type: e2-medium
@@ -138,11 +139,9 @@
             access_configs:
               - name: External NAT
                 type: ONE_TO_ONE_NAT
-        metadata_from_file: 
+        metadata_from_file:
           startup-script: startup.sh
         tags:
           - loadbalancer
         state: present
-
-
 

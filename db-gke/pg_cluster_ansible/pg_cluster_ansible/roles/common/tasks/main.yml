@@ -1,0 +1,13 @@
+- name: Install PostgreSQL
+  apt:
+    name:
+      - "postgresql-{{ postgres_version }}"
+      - "postgresql-client-{{ postgres_version }}"
+    update_cache: yes
+    state: present
+
+- name: Ensure PostgreSQL is started
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
